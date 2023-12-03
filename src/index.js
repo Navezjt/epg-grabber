@@ -3,7 +3,7 @@ const { create: createClient, buildRequest, parseResponse } = require('./client'
 const { parseChannels, parsePrograms } = require('./parser')
 const { sleep, isPromise, getUTCDate } = require('./utils')
 const { generate: generateXMLTV } = require('./xmltv')
-const { load: loadConfig } = require('./config')
+const { parse: parseConfig } = require('./config')
 const Channel = require('./Channel')
 const Program = require('./Program')
 
@@ -14,7 +14,7 @@ module.exports.Program = Program
 
 class EPGGrabber {
   constructor(config = {}) {
-    this.config = loadConfig(config)
+    this.config = config
     this.client = createClient(config)
   }
 
@@ -26,18 +26,24 @@ class EPGGrabber {
     return logo
   }
 
-  async grab(channel, date, cb = () => {}) {
+  async grab(channel, date, config = {}, cb = () => {}) {
+    if (typeof config == 'function') {
+      cb = config
+      config = {}
+    }
+    config = merge(this.config, config)
+    config = parseConfig(config)
     if (!(channel instanceof Channel)) {
       throw new Error('The first argument must be the "Channel" class')
     }
 
-    await sleep(this.config.delay)
+    await sleep(config.delay)
 
     date = typeof date === 'string' ? getUTCDate(date) : date
-    return buildRequest({ channel, date, config: this.config })
+    return buildRequest({ channel, date, config })
       .then(this.client)
       .then(parseResponse)
-      .then(data => merge({ channel, date, config: this.config }, data))
+      .then(data => merge({ channel, date, config }, data))
       .then(parsePrograms)
       .then(programs => {
         cb({ channel, date, programs })
@@ -45,7 +51,7 @@ class EPGGrabber {
         return programs
       })
       .catch(err => {
-        if (this.config.debug) console.log('Error:', JSON.stringify(err, null, 2))
+        if (config.debug) console.log('Error:', JSON.stringify(err, null, 2))
         cb({ channel, date, programs: [] }, err)
 
         return []
@@ -58,12 +64,18 @@ class EPGGrabberMock {
     this.config = config
   }
 
-  async grab(channel, date, cb) {
+  async grab(channel, date, config = {}, cb = () => {}) {
     let _date = getUTCDate(date)
-    let _programs = await this.config.parser({ channel, date: _date })
+    if (typeof config == 'function') {
+      cb = config
+      config = {}
+    }
+    config = merge(this.config, config)
+    config = parseConfig(config)
+    let _programs = await config.parser({ channel, date: _date })
     let programs = _programs.map(data => new Program(data, channel))
 
-    if (this.config.request?.timeout !== undefined && this.config.request.timeout < 1) {
+    if (config.request?.timeout !== undefined && config.request.timeout < 1) {
       cb({ programs: [], date: _date, channel }, new Error('Connection timeout'))
       return []
     }
